@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from src.models.note import Note, db
+from src.models.llm import translate as llm_translate
 
 note_bp = Blueprint('note', __name__)
 
@@ -73,4 +74,45 @@ def search_notes():
     ).order_by(Note.updated_at.desc()).all()
     
     return jsonify([note.to_dict() for note in notes])
+
+
+@note_bp.route('/translate', methods=['POST'])
+def translate_note():
+    """Translate a note's title and/or content using the LLM helper.
+
+    Request JSON:
+      { "note_id": optional int, "title": str, "content": str, "target_language": str, "save": optional bool }
+
+    Response JSON:
+      { "translated_title": str, "translated_content": str, "saved": bool }
+    """
+    try:
+        data = request.json or {}
+        target = data.get('target_language')
+        if not target:
+            return jsonify({'error': 'target_language is required'}), 400
+
+        title = data.get('title', '')
+        content = data.get('content', '')
+        note_id = data.get('note_id')
+        save = bool(data.get('save', False))
+
+        translated_title = llm_translate(title, target) if title else ''
+        translated_content = llm_translate(content, target) if content else ''
+
+        if save and note_id:
+            note = Note.query.get(note_id)
+            if note:
+                note.title = translated_title or note.title
+                note.content = translated_content or note.content
+                db.session.commit()
+                return jsonify({'translated_title': note.title, 'translated_content': note.content, 'saved': True})
+
+        return jsonify({'translated_title': translated_title, 'translated_content': translated_content, 'saved': False})
+    except Exception as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return jsonify({'error': str(e)}), 500
 
